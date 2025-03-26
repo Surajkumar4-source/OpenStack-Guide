@@ -259,5 +259,119 @@ resources:
 OpenStack is a **powerful, scalable, and flexible cloud platform** for organizations needing **private cloud, high-performance computing, and hybrid cloud solutions**.
 
 
+<br>
+<br>
+<br>
 
 
+
+
+### **🔧 OpenStack Installation Guide **  
+
+Installing OpenStack requires setting up multiple services and configuring them properly. Below is a **installation guide** for deploying OpenStack on a single-node setup using **DevStack (for testing)** and **Packstack (for production-like environments).**  
+
+---
+
+## **🛠️ Method 1: Installing OpenStack using DevStack (For Testing & Learning)**
+DevStack is a quick way to set up OpenStack on a single machine for development/testing purposes.
+
+### **📌 Prerequisites**
+✅ **Ubuntu 20.04 or 22.04 LTS** (or CentOS/RHEL 8 for Packstack)\
+✅ At least **8GB RAM, 4 vCPUs, and 50GB disk**\
+✅ **Internet Access** for package downloads\
+✅ A **non-root user** with sudo privileges  
+
+### **🚀 Step 1: Update System & Install Dependencies**
+```yml
+sudo apt update && sudo apt upgrade -y
+sudo apt install git curl -y
+```
+
+### **🚀 Step 2: Create a New User for DevStack**
+```yml
+sudo useradd -m -s /bin/bash stack
+echo "stack ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/stack
+su - stack
+```
+
+### **🚀 Step 3: Clone DevStack Repository**
+```yml
+git clone https://opendev.org/openstack/devstack.git
+cd devstack
+```
+
+### **🚀 Step 4: Configure DevStack (Create local.conf)**
+```yml
+cat <<EOF > local.conf
+[[local|localrc]]
+ADMIN_PASSWORD=supersecret
+DATABASE_PASSWORD=\$ADMIN_PASSWORD
+RABBIT_PASSWORD=\$ADMIN_PASSWORD
+SERVICE_PASSWORD=\$ADMIN_PASSWORD
+HOST_IP=$(hostname -I | awk '{print $1}')
+EOF
+```
+
+### **🚀 Step 5: Start the Installation**
+```yml
+./stack.sh
+```
+💡 This process will take **15-30 minutes** depending on system resources.
+
+### **🚀 Step 6: Access OpenStack Dashboard**
+Once installed, OpenStack Horizon can be accessed at:  
+🔗 **http://your-server-ip/dashboard**  
+Login with:  
+**Username:** `admin`  
+**Password:** `supersecret`  
+
+---
+
+## **🛠️ Method 2: Installing OpenStack using Packstack (For Production)**
+Packstack is a deployment tool for **RHEL & CentOS**-based distributions.
+
+### **📌 Prerequisites**
+✅ **CentOS 8 or RHEL 8** with at least **8GB RAM, 4 vCPUs, 100GB disk**  
+✅ **SELinux Disabled**  
+✅ **Static IP Address Assigned**
+
+### **🚀 Step 1: Update & Install Required Packages**
+```yml
+sudo dnf update -y
+sudo dnf install -y epel-release
+sudo dnf install -y centos-release-openstack-yoga
+```
+
+### **🚀 Step 2: Install Packstack**
+```yml
+sudo dnf install -y openstack-packstack
+```
+
+### **🚀 Step 3: Disable Firewall & SELinux (Optional)**
+```yml
+sudo systemctl disable --now firewalld
+sudo setenforce 0
+sudo sed -i 's/SELINUX=enforcing/SELINUX=permissive/g' /etc/selinux/config
+```
+
+### **🚀 Step 4: Run Packstack to Deploy OpenStack**
+```yml
+packstack --allinone
+```
+This will install **Keystone, Nova, Neutron, Glance, Cinder, and Horizon** on a single node.
+
+### **🚀 Step 5: Access OpenStack Dashboard**
+🔗 **http://your-server-ip/dashboard**  
+Login with:  
+**Username:** `admin`  
+**Password:** Found in `/root/keystonerc_admin`
+
+---
+
+## **📌 Post Installation Steps**
+After installation, verify the services are running:
+```yml
+openstack service list
+openstack compute service list
+openstack network agent list
+```
