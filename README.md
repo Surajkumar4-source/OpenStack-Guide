@@ -375,3 +375,268 @@ openstack service list
 openstack compute service list
 openstack network agent list
 ```
+
+
+
+
+
+<br>
+<br>
+<br>
+
+
+
+
+
+
+<br>
+
+
+
+## OpenStack Multi-Node Installation Guide (Ubuntu 22.04 LTS)
+
+This guide provides step-by-step instructions for installing OpenStack on **Ubuntu 22.04** with a **Controller Node** and **Compute Node** setup. Additionally, it includes **Network Node** configurations as an optional component.
+
+---
+
+## **1️⃣ Prerequisites**
+
+### **Hardware Requirements**
+- **Controller Node:** 8 GB RAM, 4 vCPUs, 100 GB disk
+- **Compute Node:** 16 GB RAM, 6 vCPUs, 200 GB disk
+- **Network Node (Optional):** 8 GB RAM, 4 vCPUs, 100 GB disk
+
+### **Network Configuration**
+
+| Node      | Interface 1 (Management) | Interface 2 (Provider/External) |
+|-----------|-------------------------|---------------------------------|
+| Controller | 192.168.0.10 (eth0)      | 192.168.1.10 (eth1)            |
+| Compute   | 192.168.0.20 (eth0)      | 192.168.1.20 (eth1)            |
+| Network   | 192.168.0.30 (eth0)      | 192.168.1.30 (eth1)            |
+
+### **Software Requirements**
+- **Ubuntu 22.04 LTS (Minimal Install)**
+- **Internet connectivity**
+- **Root privileges**
+
+---
+
+## **2️⃣ Prepare All Nodes**
+
+### **Update and Set Hostnames**
+Run the following commands on each node:
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo hostnamectl set-hostname <NODE_NAME>
+```
+Modify `/etc/hosts` to define all nodes:
+```bash
+echo "192.168.0.10 controller" | sudo tee -a /etc/hosts
+echo "192.168.0.20 compute" | sudo tee -a /etc/hosts
+echo "192.168.0.30 network" | sudo tee -a /etc/hosts
+```
+
+### **Disable Swap (Required for OpenStack)**
+```bash
+sudo swapoff -a
+sed -i '/ swap / s/^/#/' /etc/fstab
+```
+
+### **Install OpenStack Repository**
+```bash
+sudo add-apt-repository cloud-archive:zed -y
+sudo apt update && sudo apt upgrade -y
+```
+
+---
+
+## **3️⃣ Controller Node Setup**
+
+### **Install Database (MariaDB)**
+```bash
+sudo apt install mariadb-server python3-pymysql -y
+sudo mysql_secure_installation
+```
+Modify MariaDB configuration:
+```bash
+sudo nano /etc/mysql/mariadb.conf.d/99-openstack.cnf
+```
+Add the following lines:
+```ini
+[mysqld]
+bind-address = 192.168.0.10
+default-storage-engine = innodb
+innodb_file_per_table = on
+max_connections = 4096
+collation-server = utf8_general_ci
+character-set-server = utf8
+```
+Restart MariaDB:
+```bash
+sudo systemctl restart mariadb
+```
+
+### **Install RabbitMQ**
+```bash
+sudo apt install rabbitmq-server -y
+sudo rabbitmqctl add_user openstack password
+sudo rabbitmqctl set_permissions openstack ".*" ".*" ".*"
+```
+
+### **Install & Configure Keystone (Identity Service)**
+```bash
+sudo apt install -y keystone apache2 libapache2-mod-wsgi-py3
+```
+Modify `/etc/keystone/keystone.conf`:
+```ini
+[database]
+connection = mysql+pymysql://keystone:password@controller/keystone
+
+[token]
+provider = fernet
+```
+Initialize Keystone:
+```bash
+sudo keystone-manage db_sync
+sudo keystone-manage fernet_setup --keystone-user keystone --keystone-group keystone
+sudo keystone-manage credential_setup --keystone-user keystone --keystone-group keystone
+sudo keystone-manage bootstrap --bootstrap-password ADMIN_PASS \
+  --bootstrap-admin-url http://controller:5000/v3/ \
+  --bootstrap-internal-url http://controller:5000/v3/ \
+  --bootstrap-public-url http://controller:5000/v3/ \
+  --bootstrap-region-id RegionOne
+```
+
+### **Install & Configure Glance (Image Service)**
+```bash
+sudo apt install -y glance
+```
+Modify `/etc/glance/glance-api.conf`:
+```ini
+[database]
+connection = mysql+pymysql://glance:password@controller/glance
+
+[keystone_authtoken]
+auth_url = http://controller:5000
+```
+Initialize Glance:
+```bash
+sudo glance-manage db_sync
+sudo systemctl restart glance-api
+```
+
+---
+
+## **4️⃣ Compute Node Setup**
+
+### **Install Nova (Compute Service)**
+On **Controller Node**:
+```bash
+sudo apt install -y nova-api nova-conductor nova-scheduler nova-novncproxy
+```
+Modify `/etc/nova/nova.conf`:
+```ini
+[api_database]
+connection = mysql+pymysql://nova:password@controller/nova
+
+[keystone_authtoken]
+auth_url = http://controller:5000
+
+[glance]
+api_servers = http://controller:9292
+```
+Initialize Nova:
+```bash
+sudo nova-manage db_sync
+sudo systemctl restart nova-api nova-conductor nova-scheduler nova-novncproxy
+```
+
+On **Compute Node**:
+```bash
+sudo apt install -y nova-compute
+```
+Modify `/etc/nova/nova.conf`:
+```ini
+[DEFAULT]
+transport_url = rabbit://openstack:password@controller
+my_ip = 192.168.0.20
+```
+Restart Nova Compute service:
+```bash
+sudo systemctl restart nova-compute
+```
+
+---
+
+## **5️⃣ Install & Configure Neutron (Networking)**
+
+### **On Controller Node:**
+```bash
+sudo apt install -y neutron-server neutron-plugin-ml2 neutron-linuxbridge-agent neutron-dhcp-agent neutron-metadata-agent
+```
+Modify `/etc/neutron/neutron.conf`:
+```ini
+[database]
+connection = mysql+pymysql://neutron:password@controller/neutron
+
+[keystone_authtoken]
+auth_url = http://controller:5000
+```
+Initialize Neutron:
+```bash
+sudo neutron-db-manage upgrade heads
+sudo systemctl restart neutron-server neutron-dhcp-agent neutron-metadata-agent
+```
+
+### **On Compute Node:**
+```bash
+sudo apt install -y neutron-linuxbridge-agent
+```
+Modify `/etc/neutron/neutron.conf`:
+```ini
+[DEFAULT]
+transport_url = rabbit://openstack:password@controller
+```
+Restart Neutron service:
+```bash
+sudo systemctl restart neutron-linuxbridge-agent
+```
+
+---
+
+## **6️⃣ Final Verification**
+Run the following commands on the **Controller Node** to check service status:
+```bash
+source admin-openrc
+openstack compute service list
+openstack network agent list
+```
+✅ Ensures all services are running correctly.
+
+---
+This guide ensures a smooth OpenStack deployment across multiple nodes on Ubuntu 22.04 LTS.
+
+
+
+
+
+<br>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
